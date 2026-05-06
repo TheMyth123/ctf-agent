@@ -13,12 +13,28 @@ logger = logging.getLogger(__name__)
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36"
 
-# GZCTF AnswerResult enum values (string or int)
-_ACCEPTED = {"Accepted", "accepted", 0}
-_ALREADY_SOLVED = {"AlreadySolved", "alreadysolved", 4}
-_WRONG = {"WrongAnswer", "wronganswer", 1}
-_NOT_FOUND = {"NotFound", "notfound", 2}
-_CHEAT = {"CheatDetected", "cheatdetected", 3}
+# GZCTF AnswerResult: map both string names and integer enum values to internal status
+_GZCTF_STATUS: dict[str | int, str] = {
+    # String keys (lowercase, no spaces) → internal status
+    "accepted": "correct",
+    "alreadysolved": "already_solved",
+    "wronganswer": "incorrect",
+    "notfound": "incorrect",
+    "cheatdetected": "incorrect",
+    "forbidden": "incorrect",
+    # Integer enum values (AnswerResult)
+    0: "correct",    # Accepted
+    1: "incorrect",  # WrongAnswer
+    2: "incorrect",  # NotFound
+    3: "incorrect",  # CheatDetected
+    4: "already_solved",  # AlreadySolved / Forbidden (platform-dependent)
+}
+
+_STATUS_DISPLAY = {
+    "correct": lambda flag: f'CORRECT — "{flag}" accepted.',
+    "already_solved": lambda flag: f'ALREADY SOLVED — "{flag}" accepted.',
+    "incorrect": lambda flag: f'INCORRECT — "{flag}" rejected.',
+}
 
 
 @dataclass
@@ -137,22 +153,19 @@ class GZCTFClient:
         except httpx.HTTPStatusError as exc:
             return SubmitResult("unknown", str(exc), f"Submit error: {exc}")
 
-        # GZCTF returns {"status": "Accepted"} or {"status": 0} or similar
+        # Normalise GZCTF status to a lookup key
         status_raw = resp if isinstance(resp, (str, int)) else resp.get("status", "unknown")
-        status_key = status_raw.lower().replace(" ", "") if isinstance(status_raw, str) else status_raw
+        if isinstance(status_raw, str):
+            lookup_key: str | int = status_raw.lower().replace(" ", "")
+        else:
+            lookup_key = status_raw
 
-        if status_raw in _ACCEPTED or status_key == "accepted":
-            return SubmitResult("correct", "Accepted", f'CORRECT — "{flag}" accepted.')
-        if status_raw in _ALREADY_SOLVED or status_key == "alreadysolved":
-            return SubmitResult(
-                "already_solved", "Already solved",
-                f'ALREADY SOLVED — "{flag}" accepted.'
-            )
-        if status_raw in _WRONG or status_key == "wronganswer":
-            return SubmitResult("incorrect", "Wrong answer", f'INCORRECT — "{flag}" rejected.')
-        if status_raw in _CHEAT or status_key == "cheatdetected":
-            return SubmitResult("incorrect", "Cheat detected", f'CHEAT DETECTED — "{flag}" flagged.')
-        return SubmitResult("unknown", str(status_raw), f"Unknown status: {status_raw}")
+        internal = _GZCTF_STATUS.get(lookup_key)
+        if internal is None:
+            return SubmitResult("unknown", str(status_raw), f"Unknown status: {status_raw}")
+
+        display_fn = _STATUS_DISPLAY.get(internal, lambda f: f"Status '{internal}': {f}")
+        return SubmitResult(internal, str(status_raw), display_fn(flag))
 
     async def fetch_all_challenges(self) -> list[dict[str, Any]]:
         """Fetch challenges with full detail (description, hints, files)."""
@@ -255,7 +268,12 @@ class GZCTFClient:
         except Exception:
             pass
 
-        tags = challenge.get("tags") or [challenge.get("tag") or challenge.get("category") or ""]
+        tags_raw = challenge.get("tags") or []
+        if not tags_raw:
+            t = challenge.get("tag") or challenge.get("category")
+            if t:
+                tags_raw = [t]
+        tags = [str(t) for t in tags_raw if t]
         hints_raw = challenge.get("hints") or []
         hints = [{"content": h} if isinstance(h, str) else h for h in hints_raw]
 
@@ -265,7 +283,7 @@ class GZCTFClient:
             "description": desc.strip(),
             "value": challenge.get("value") or challenge.get("score") or 0,
             "connection_info": challenge.get("connection_info") or "",
-            "tags": [t for t in tags if t],
+            "tags": tags,
             "solves": challenge.get("solves") or challenge.get("solved") or 0,
         }
         if hints:

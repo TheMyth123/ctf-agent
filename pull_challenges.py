@@ -174,8 +174,12 @@ async def pull_challenges(
 # ---------------------------------------------------------------------------
 
 def build_metadata(challenge: dict, hints: list[dict]) -> dict:
-    tags_raw = challenge.get("tags") or [challenge.get("tag") or challenge.get("category") or ""]
-    tags = [t for t in tags_raw if t]
+    tags_raw = challenge.get("tags") or []
+    if not tags_raw:
+        t = challenge.get("tag") or challenge.get("category")
+        if t:
+            tags_raw = [t]
+    tags = [str(t) for t in tags_raw if t]
     description = html_to_markdown(challenge.get("description") or "")
 
     meta = {

@@ -36,7 +36,6 @@ def _setup_logging(verbose: bool = False) -> None:
 @click.option("--challenge", default=None, help="Solve a single challenge directory")
 @click.option("--challenges-dir", default="challenges", help="Directory for challenge files")
 @click.option("--no-submit", is_flag=True, help="Dry run — don't submit flags")
-@click.option("--coordinator-model", default=None, help="Unused — coordinator always uses gemini-2.0-flash")
 @click.option("--max-challenges", default=10, type=int, help="Max challenges solved concurrently")
 @click.option("--msg-port", default=0, type=int, help="Operator message port (0 = auto)")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose logging")
@@ -49,7 +48,6 @@ def main(
     challenge: str | None,
     challenges_dir: str,
     no_submit: bool,
-    coordinator_model: str | None,
     max_challenges: int,
     msg_port: int,
     verbose: bool,
@@ -81,7 +79,7 @@ def main(
     if challenge:
         asyncio.run(_run_single(settings, challenge, model_specs, no_submit, max_challenges))
     else:
-        asyncio.run(_run_coordinator(settings, model_specs, challenges_dir, no_submit, coordinator_model, max_challenges, msg_port))
+        asyncio.run(_run_coordinator(settings, model_specs, challenges_dir, no_submit, max_challenges, msg_port))
 
 
 async def _run_single(
@@ -151,7 +149,6 @@ async def _run_coordinator(
     model_specs: list[str],
     challenges_dir: str,
     no_submit: bool,
-    coordinator_model: str | None,
     max_challenges: int,
     msg_port: int = 0,
 ) -> None:
@@ -169,7 +166,6 @@ async def _run_coordinator(
         model_specs=model_specs,
         challenges_root=challenges_dir,
         no_submit=no_submit,
-        coordinator_model=coordinator_model,
         msg_port=msg_port,
     )
 
