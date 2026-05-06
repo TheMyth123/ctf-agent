@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING
 
 from backend.agents.solver import Solver
 from backend.cost_tracker import CostTracker
-from backend.ctfd import CTFdClient
+from backend.gzctf import GZCTFClient
 from backend.message_bus import ChallengeMessageBus
-from backend.models import DEFAULT_MODELS, provider_from_spec
+from backend.models import DEFAULT_MODELS
 from backend.prompts import ChallengeMeta
 from backend.solver_base import (
     CANCELLED,
@@ -30,26 +30,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Quota fallback: map subscription-backed providers to API-backed equivalents
-QUOTA_FALLBACK: dict[str, str] = {
-    "claude-sdk/claude-opus-4-6": "bedrock/us.anthropic.claude-opus-4-6-v1",
-    "codex/gpt-5.4": "azure/gpt-5.4",
-    "codex/gpt-5.4-mini": "azure/gpt-5.4-mini",
-    "codex/gpt-5.3-codex-spark": "zen/gpt-5.3-codex-spark",
-}
-
-
-def _quota_fallback_spec(model_spec: str) -> str | None:
-    return QUOTA_FALLBACK.get(model_spec)
-
-
 @dataclass
 class ChallengeSwarm:
     """Parallel solvers racing on one challenge."""
 
     challenge_dir: str
     meta: ChallengeMeta
-    ctfd: CTFdClient
+    ctfd: GZCTFClient
     cost_tracker: CostTracker
     settings: Settings
     model_specs: list[str] = field(default_factory=lambda: list(DEFAULT_MODELS))
@@ -68,49 +55,7 @@ class ChallengeSwarm:
     message_bus: ChallengeMessageBus = field(default_factory=ChallengeMessageBus)
 
     def _create_solver(self, model_spec: str):
-        """Create the right solver type based on provider.
-
-        - claude-sdk/* → ClaudeSolver (Claude Agent SDK, subscription-first)
-        - codex/* → CodexSolver (Codex App Server, subscription-first)
-        - bedrock/*, azure/*, zen/*, google/* → Pydantic AI Solver (API)
-        """
-        provider = provider_from_spec(model_spec)
-
-        def _submit_fn(flag): return self.try_submit_flag(flag, model_spec)
-        _notify = self._make_notify_fn(model_spec)
-
-        if provider == "claude-sdk":
-            from backend.agents.claude_solver import ClaudeSolver
-            return ClaudeSolver(
-                model_spec=model_spec,
-                challenge_dir=self.challenge_dir,
-                meta=self.meta,
-                ctfd=self.ctfd,
-                cost_tracker=self.cost_tracker,
-                settings=self.settings,
-                cancel_event=self.cancel_event,
-                no_submit=self.no_submit,
-                submit_fn=_submit_fn,
-                message_bus=self.message_bus,
-                notify_coordinator=_notify,
-            )
-
-        if provider == "codex":
-            from backend.agents.codex_solver import CodexSolver
-            return CodexSolver(
-                model_spec=model_spec,
-                challenge_dir=self.challenge_dir,
-                meta=self.meta,
-                ctfd=self.ctfd,
-                cost_tracker=self.cost_tracker,
-                settings=self.settings,
-                cancel_event=self.cancel_event,
-                no_submit=self.no_submit,
-                submit_fn=_submit_fn,
-                message_bus=self.message_bus,
-                notify_coordinator=_notify,
-            )
-
+        """Create a Pydantic AI solver using the Google AI Studio provider."""
         return self._create_pydantic_solver(model_spec)
 
     def _make_notify_fn(self, model_spec: str):
@@ -237,22 +182,8 @@ class ChallengeSwarm:
             if result.status == CANCELLED:
                 break
 
-            # Quota exhaustion: fall back to API-backed Pydantic AI solver
             if result.status == QUOTA_ERROR:
-                fallback_spec = _quota_fallback_spec(model_spec)
-                if fallback_spec:
-                    logger.warning(
-                        f"[{self.meta.name}/{model_spec}] Quota exhausted — falling back to {fallback_spec}"
-                    )
-                    existing_sandbox = solver.sandbox
-                    # Detach sandbox from old solver so stop() doesn't destroy it
-                    solver.sandbox = None  # type: ignore[assignment]
-                    await solver.stop()
-                    solver = self._create_pydantic_solver(fallback_spec, sandbox=existing_sandbox, owns_sandbox=True)
-                    self.solvers[model_spec] = solver
-                    await solver.start()
-                    continue
-                # No fallback available, treat as error
+                # No quota fallback for Google AI — treat as error
                 break
 
             if result.status in (GAVE_UP, ERROR):

@@ -20,7 +20,6 @@ def _setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("botocore").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("aiodocker").setLevel(logging.WARNING)
     handler = logging.StreamHandler()
@@ -29,49 +28,51 @@ def _setup_logging(verbose: bool = False) -> None:
 
 
 @click.command()
-@click.option("--ctfd-url", default=None, help="CTFd URL (overrides .env)")
-@click.option("--ctfd-token", default=None, help="CTFd API token (overrides .env)")
+@click.option("--gzctf-url", default=None, help="GZCTF URL (overrides .env)")
+@click.option("--gzctf-token", default=None, help="GZCTF Bearer token (overrides .env)")
+@click.option("--gzctf-game-id", default=None, type=int, help="GZCTF game ID (overrides .env)")
 @click.option("--image", default="ctf-sandbox", help="Docker sandbox image name")
 @click.option("--models", multiple=True, help="Model specs (default: all configured)")
 @click.option("--challenge", default=None, help="Solve a single challenge directory")
 @click.option("--challenges-dir", default="challenges", help="Directory for challenge files")
 @click.option("--no-submit", is_flag=True, help="Dry run — don't submit flags")
-@click.option("--coordinator-model", default=None, help="Model for coordinator (default: claude-opus-4-6)")
-@click.option("--coordinator", default="claude", type=click.Choice(["claude", "codex"]), help="Coordinator backend")
+@click.option("--coordinator-model", default=None, help="Unused — coordinator always uses gemini-2.0-flash")
 @click.option("--max-challenges", default=10, type=int, help="Max challenges solved concurrently")
 @click.option("--msg-port", default=0, type=int, help="Operator message port (0 = auto)")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose logging")
 def main(
-    ctfd_url: str | None,
-    ctfd_token: str | None,
+    gzctf_url: str | None,
+    gzctf_token: str | None,
+    gzctf_game_id: int | None,
     image: str,
     models: tuple[str, ...],
     challenge: str | None,
     challenges_dir: str,
     no_submit: bool,
     coordinator_model: str | None,
-    coordinator: str,
     max_challenges: int,
     msg_port: int,
     verbose: bool,
 ) -> None:
-    """CTF Agent — multi-model solver swarm.
+    """CTF Agent — Google AI Studio solver for GZCTF.
 
     Run without --challenge to start the full coordinator (Ctrl+C to stop).
     """
     _setup_logging(verbose)
 
     settings = Settings(sandbox_image=image)
-    if ctfd_url:
-        settings.ctfd_url = ctfd_url
-    if ctfd_token:
-        settings.ctfd_token = ctfd_token
+    if gzctf_url:
+        settings.gzctf_url = gzctf_url
+    if gzctf_token:
+        settings.gzctf_token = gzctf_token
+    if gzctf_game_id is not None:
+        settings.gzctf_game_id = gzctf_game_id
     settings.max_concurrent_challenges = max_challenges
 
     model_specs = list(models) if models else list(DEFAULT_MODELS)
 
-    console.print("[bold]CTF Agent v2[/bold]")
-    console.print(f"  CTFd: {settings.ctfd_url}")
+    console.print("[bold]CTF Agent — GZCTF + Google AI[/bold]")
+    console.print(f"  GZCTF: {settings.gzctf_url} (game {settings.gzctf_game_id})")
     console.print(f"  Models: {', '.join(model_specs)}")
     console.print(f"  Image: {settings.sandbox_image}")
     console.print(f"  Max challenges: {max_challenges}")
@@ -80,7 +81,7 @@ def main(
     if challenge:
         asyncio.run(_run_single(settings, challenge, model_specs, no_submit, max_challenges))
     else:
-        asyncio.run(_run_coordinator(settings, model_specs, challenges_dir, no_submit, coordinator_model, coordinator, max_challenges, msg_port))
+        asyncio.run(_run_coordinator(settings, model_specs, challenges_dir, no_submit, coordinator_model, max_challenges, msg_port))
 
 
 async def _run_single(
@@ -93,7 +94,7 @@ async def _run_single(
     """Run a single challenge with a swarm."""
     from backend.agents.swarm import ChallengeSwarm
     from backend.cost_tracker import CostTracker
-    from backend.ctfd import CTFdClient
+    from backend.gzctf import GZCTFClient
     from backend.prompts import ChallengeMeta
     from backend.sandbox import cleanup_orphan_containers, configure_semaphore
 
@@ -110,18 +111,19 @@ async def _run_single(
     meta = ChallengeMeta.from_yaml(meta_path)
     console.print(f"[bold]Challenge:[/bold] {meta.name} ({meta.category}, {meta.value} pts)")
 
-    ctfd = CTFdClient(
-        base_url=settings.ctfd_url,
-        token=settings.ctfd_token,
-        username=settings.ctfd_user,
-        password=settings.ctfd_pass,
+    gzctf = GZCTFClient(
+        base_url=settings.gzctf_url,
+        game_id=settings.gzctf_game_id,
+        token=settings.gzctf_token,
+        username=settings.gzctf_user,
+        password=settings.gzctf_pass,
     )
     cost_tracker = CostTracker()
 
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_path),
         meta=meta,
-        ctfd=ctfd,
+        ctfd=gzctf,
         cost_tracker=cost_tracker,
         settings=settings,
         model_specs=model_specs,
@@ -141,7 +143,7 @@ async def _run_single(
             console.print(f"  {agent_name}: {cost_tracker.format_usage(agent_name)}")
         console.print(f"  [bold]Total: ${cost_tracker.total_cost_usd:.2f}[/bold]")
     finally:
-        await ctfd.close()
+        await gzctf.close()
 
 
 async def _run_coordinator(
@@ -150,7 +152,6 @@ async def _run_coordinator(
     challenges_dir: str,
     no_submit: bool,
     coordinator_model: str | None,
-    coordinator_backend: str,
     max_challenges: int,
     msg_port: int = 0,
 ) -> None:
@@ -160,28 +161,17 @@ async def _run_coordinator(
     max_containers = max_challenges * len(model_specs)
     configure_semaphore(max_containers)
     await cleanup_orphan_containers()
-    console.print(f"[bold]Starting coordinator ({coordinator_backend}, Ctrl+C to stop)...[/bold]\n")
+    console.print("[bold]Starting Google AI coordinator (Ctrl+C to stop)...[/bold]\n")
 
-    if coordinator_backend == "codex":
-        from backend.agents.codex_coordinator import run_codex_coordinator
-        results = await run_codex_coordinator(
-            settings=settings,
-            model_specs=model_specs,
-            challenges_root=challenges_dir,
-            no_submit=no_submit,
-            coordinator_model=coordinator_model,
-            msg_port=msg_port,
-        )
-    else:
-        from backend.agents.claude_coordinator import run_claude_coordinator
-        results = await run_claude_coordinator(
-            settings=settings,
-            model_specs=model_specs,
-            challenges_root=challenges_dir,
-            no_submit=no_submit,
-            coordinator_model=coordinator_model,
-            msg_port=msg_port,
-        )
+    from backend.agents.google_coordinator import run_google_coordinator
+    results = await run_google_coordinator(
+        settings=settings,
+        model_specs=model_specs,
+        challenges_root=challenges_dir,
+        no_submit=no_submit,
+        coordinator_model=coordinator_model,
+        msg_port=msg_port,
+    )
 
     console.print("\n[bold]Final Results:[/bold]")
     for challenge, data in results.get("results", {}).items():

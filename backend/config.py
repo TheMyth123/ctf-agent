@@ -6,23 +6,15 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # CTFd
-    ctfd_url: str = "http://localhost:8000"
-    ctfd_user: str = "admin"
-    ctfd_pass: str = "admin"
-    ctfd_token: str = ""
+    # GZCTF
+    gzctf_url: str = "http://localhost:8080"
+    gzctf_user: str = "admin"
+    gzctf_pass: str = "admin"
+    gzctf_token: str = ""
+    gzctf_game_id: int = 1
 
-    # API Keys
-    anthropic_api_key: str = ""
-    openai_api_key: str = ""
+    # Google AI Studio
     gemini_api_key: str = ""
-
-    # Provider-specific (optional, for Bedrock/Azure/Zen fallback)
-    aws_region: str = "us-east-1"
-    aws_bearer_token: str = ""
-    azure_openai_endpoint: str = ""
-    azure_openai_api_key: str = ""
-    opencode_zen_api_key: str = ""
 
     # Infra
     sandbox_image: str = "ctf-sandbox"

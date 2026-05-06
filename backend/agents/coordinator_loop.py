@@ -11,7 +11,7 @@ from typing import Any
 
 from backend.config import Settings
 from backend.cost_tracker import CostTracker
-from backend.ctfd import CTFdClient
+from backend.gzctf import GZCTFClient
 from backend.deps import CoordinatorDeps
 from backend.models import DEFAULT_MODELS
 from backend.poller import CTFdPoller
@@ -30,13 +30,14 @@ def build_deps(
     no_submit: bool = False,
     challenge_dirs: dict[str, str] | None = None,
     challenge_metas: dict[str, ChallengeMeta] | None = None,
-) -> tuple[CTFdClient, CostTracker, CoordinatorDeps]:
-    """Create CTFd client, cost tracker, and coordinator deps."""
-    ctfd = CTFdClient(
-        base_url=settings.ctfd_url,
-        token=settings.ctfd_token,
-        username=settings.ctfd_user,
-        password=settings.ctfd_pass,
+) -> tuple[GZCTFClient, CostTracker, CoordinatorDeps]:
+    """Create GZCTF client, cost tracker, and coordinator deps."""
+    ctfd = GZCTFClient(
+        base_url=settings.gzctf_url,
+        game_id=settings.gzctf_game_id,
+        token=settings.gzctf_token,
+        username=settings.gzctf_user,
+        password=settings.gzctf_pass,
     )
     cost_tracker = CostTracker()
     specs = model_specs or list(DEFAULT_MODELS)
@@ -68,7 +69,7 @@ def build_deps(
 
 async def run_event_loop(
     deps: CoordinatorDeps,
-    ctfd: CTFdClient,
+    ctfd: GZCTFClient,
     cost_tracker: CostTracker,
     turn_fn: TurnFn,
     status_interval: int = 60,
@@ -77,7 +78,7 @@ async def run_event_loop(
 
     Args:
         deps: Coordinator dependencies (shared state).
-        ctfd: CTFd client (for poller).
+        ctfd: GZCTF client (for poller).
         cost_tracker: Cost tracker.
         turn_fn: Async function that sends a message to the coordinator LLM.
         status_interval: Seconds between status updates.

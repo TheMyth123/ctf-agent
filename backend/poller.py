@@ -1,10 +1,10 @@
-"""Background CTFd poller — detects new and solved challenges every 5 seconds."""
+"""Background GZCTF poller — detects new and solved challenges every 5 seconds."""
 
 import asyncio
 import logging
 from dataclasses import dataclass, field
 
-from backend.ctfd import CTFdClient
+from backend.gzctf import GZCTFClient
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +18,9 @@ class PollEvent:
 
 @dataclass
 class CTFdPoller:
-    """Polls CTFd every interval_s seconds, emits events for new/solved challenges."""
+    """Polls GZCTF every interval_s seconds, emits events for new/solved challenges."""
 
-    ctfd: CTFdClient
+    ctfd: GZCTFClient
     interval_s: float = 5.0
 
     _known_challenges: set[str] = field(default_factory=set)
@@ -37,7 +37,7 @@ class CTFdPoller:
             len(self._known_challenges),
             len(self._known_solved),
         )
-        self._task = asyncio.create_task(self._loop(), name="ctfd-poller")
+        self._task = asyncio.create_task(self._loop(), name="gzctf-poller")
 
     async def _seed(self) -> None:
         """Initial fetch — just populate known state, no events."""

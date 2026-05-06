@@ -60,7 +60,7 @@ async def do_spawn_swarm(deps: CoordinatorDeps, challenge_name: str) -> str:
         challenges = await deps.ctfd.fetch_all_challenges()
         ch_data = next((c for c in challenges if c.get("name") == challenge_name), None)
         if not ch_data:
-            return f"Challenge '{challenge_name}' not found on CTFd"
+            return f"Challenge '{challenge_name}' not found on GZCTF"
         output_dir = str(Path(deps.challenges_root))
         ch_dir = await deps.ctfd.pull_challenge(ch_data, output_dir)
         deps.challenge_dirs[challenge_name] = ch_dir
